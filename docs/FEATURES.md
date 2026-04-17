@@ -7,7 +7,8 @@
 | 使用者認證 | ✅ 完成 | 註冊、登入、個人資料 |
 | 商品瀏覽 | ✅ 完成 | 列表（分頁）、詳情 |
 | 購物車 | ✅ 完成 | 雙模式認證、增刪改查 |
-| 訂單 | ✅ 完成 | 建立、列表、詳情、模擬付款 |
+| 訂單 | ✅ 完成 | 建立、列表、詳情 |
+| ECPay 金流 | ✅ 完成 | AIO 信用卡付款、QueryTradeInfo 主動查詢確認 |
 | 後台商品管理 | ✅ 完成 | CRUD、刪除保護 |
 | 後台訂單管理 | ✅ 完成 | 列表（篩選）、詳情 |
 | 前台 UI | ✅ 完成 | EJS SSR、Tailwind CSS v4 |
@@ -166,6 +167,7 @@
 - `action: "fail"` → status 更新為 `"failed"`
 - 只能對 `status === "pending"` 的訂單操作
 - 付款後**不恢復庫存**（即使 action 為 fail）
+- **注意**：此端點為測試用，前台 UI 已改為 ECPay 真實金流，但端點本身保留供整合測試使用
 
 ### 端點規格
 
@@ -187,6 +189,69 @@
 | 訂單不存在（或屬於其他人） | 404 | `NOT_FOUND` |
 | `action` 不是 success/fail | 400 | `VALIDATION_ERROR` |
 | 訂單 status 不是 pending | 400 | `INVALID_STATUS` |
+
+---
+
+## 4-1. ECPay 金流（ECPay AIO Payment）
+
+### 行為描述
+
+本專案串接**綠界 ECPay AIO（全方位金流）**，目前支援信用卡一次付清（`ChoosePayment=Credit`）。
+因專案運行於本地端，無法接收綠界 Server Notify（ReturnURL），故付款確認改由本地端主動呼叫 **QueryTradeInfo** API 查詢。
+
+**付款流程**：
+
+1. 使用者結帳（`POST /api/orders`）建立訂單後，前端自動導向 `/orders/:id/pay`
+2. 伺服器端（`pageRoutes.js`）查詢訂單、計算 CheckMacValue，渲染含隱藏表單的 `ecpay-payment.ejs`
+3. 頁面載入後 JavaScript 自動提交表單，瀏覽器跳轉至綠界付款頁
+4. 使用者完成付款後，綠界將瀏覽器 POST 導回 `OrderResultURL`（`POST /ecpay/result`）
+5. 伺服器接收後，呼叫 QueryTradeInfo 向綠界主動查詢真實付款狀態
+6. 依 `TradeStatus==='1'` 將訂單 status 更新為 `paid`，否則更新為 `failed`
+7. 重新導向 `/orders/:id?payment=success` 或 `?payment=failed`，頁面顯示結果訊息
+
+**ReturnURL（Server-to-Server）**：
+
+`POST /api/ecpay/notify` 已實作但本地端不會被綠界呼叫（非標準 port）。
+部署至可公開存取的主機後，此端點會自動生效，可在 ReturnURL 收到通知時同步更新訂單狀態。
+
+**MerchantTradeNo 規則**：
+
+使用 `order_no.replace(/-/g, '')` 產生，例如 `ORD-20260418-A3F2C` → `ORD20260418A3F2C`（16 字元，符合上限 20）。可透過截取位置逆向重建原始 order_no。
+
+**CheckMacValue**：
+
+由 `src/utils/ecpay.js` 的 `generateCheckMacValue()` 計算，實作符合綠界規格（ecpayUrlEncode + SHA256 + 轉大寫）。驗證使用 `crypto.timingSafeEqual()` 防止 timing attack。
+
+**CustomField1**：
+
+傳入 ECPay 的 `CustomField1` 欄位存放訂單的 UUID（`order.id`），供 `/ecpay/result` 接收後直接查詢資料庫，無需從 MerchantTradeNo 逆推 order_no。
+
+### 測試帳號（測試環境）
+
+| 項目 | 值 |
+|------|-----|
+| MerchantID | `3002607` |
+| HashKey | `pwFHCqoQZGmho4w6` |
+| HashIV | `EkRm7iFT261dpevs` |
+| 測試信用卡 | `4311-9522-2222-2222` |
+| CVV | 任意 3 位（如 `222`） |
+| 3D Secure 驗證碼 | `1234` |
+
+### 相關路由
+
+| 路由 | 方法 | 說明 |
+|------|------|------|
+| `/orders/:id/pay` | GET | 渲染自動提交表單頁，導向綠界付款 |
+| `/ecpay/result` | POST | ECPay 付款後客戶端重導目標，查詢後更新訂單 |
+| `/api/ecpay/notify` | POST | ECPay ReturnURL（本地無效，部署後生效） |
+
+### 相關檔案
+
+| 檔案 | 說明 |
+|------|------|
+| `src/utils/ecpay.js` | CheckMacValue 計算、表單參數組建、QueryTradeInfo 呼叫 |
+| `src/routes/ecpayRoutes.js` | `/api/ecpay/notify` 路由處理器 |
+| `views/pages/ecpay-payment.ejs` | 自動提交表單頁面 |
 
 ---
 
@@ -272,7 +337,8 @@
 | 結帳 | `/checkout` | `pages/checkout.js` | 原生 JS | 收件資訊表單、建立訂單 |
 | 登入/註冊 | `/login` | `pages/login.js` | Vue 3 CDN | 分 tab，含表單驗證 |
 | 我的訂單 | `/orders` | `pages/orders.js` | 原生 JS | 訂單列表（需登入） |
-| 訂單詳情 | `/orders/:id` | `pages/order-detail.js` | 原生 JS | 訂單資訊 + 模擬付款 |
+| 訂單詳情 | `/orders/:id` | `pages/order-detail.js` | 原生 JS | 訂單資訊 + 前往付款按鈕 |
+| 綠界付款 | `/orders/:id/pay` | — | — | 自動提交表單，導向綠界付款頁 |
 | 後台商品 | `/admin/products` | `pages/admin-products.js` | 原生 JS | 商品 CRUD（需 admin） |
 | 後台訂單 | `/admin/orders` | `pages/admin-orders.js` | 原生 JS | 訂單列表篩選（需 admin） |
 
@@ -286,7 +352,9 @@
 | `pageScript` | String | 要載入的 `/public/js/pages/*.js` 名稱 |
 | `productId` | String | （`/products/:id`）注入商品 ID 供 JS 使用 |
 | `orderId` | String | （`/orders/:id`）注入訂單 ID 供 JS 使用 |
-| `paymentResult` | String | （`/orders/:id`）`?payment=success/fail` 的值 |
+| `paymentResult` | String | （`/orders/:id`）`?payment=success/failed` 的值，由 `/ecpay/result` 帶入 |
+| `paymentParams` | Object | （`/orders/:id/pay`）包含 CheckMacValue 的 ECPay AIO 表單參數 |
+| `paymentUrl` | String | （`/orders/:id/pay`）ECPay 付款端點 URL（依環境切換） |
 | `currentPath` | String | （admin 頁面）當前路徑，供 sidebar 高亮使用 |
 
 ### Seed 商品（8 件花卉商品）

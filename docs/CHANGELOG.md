@@ -1,5 +1,29 @@
 # CHANGELOG.md
 
+## [1.1.0] - 2026-04-18
+
+### 新增
+
+- **ECPay AIO 金流串接**（信用卡一次付清）
+  - `src/utils/ecpay.js`：CheckMacValue 計算（SHA256 + ecpayUrlEncode）、AIO 表單參數組建、QueryTradeInfo 主動查詢
+  - `src/routes/ecpayRoutes.js`：`POST /api/ecpay/notify`（ReturnURL，本地端無效，部署後自動生效）
+  - `views/pages/ecpay-payment.ejs`：渲染含隱藏 input 的自動提交表單，跳轉至綠界付款頁
+  - `GET /orders/:id/pay`（頁面路由）：伺服器端計算 CheckMacValue 並渲染付款表單頁
+  - `POST /ecpay/result`（頁面路由）：接收綠界付款後客戶端重導，主動呼叫 QueryTradeInfo 驗證並更新訂單狀態
+
+### 修改
+
+- `public/js/pages/checkout.js`：結帳送出成功後改導向 `/orders/:id/pay`（原為 `/orders/:id`）
+- `views/pages/order-detail.ejs`：將模擬付款的「付款成功/失敗」假按鈕改為「前往綠界付款」連結
+- `public/js/pages/order-detail.js`：移除 `simulatePay()`、`handlePaySuccess`、`handlePayFail` 模擬付款邏輯
+
+### 備註
+
+- `PATCH /api/orders/:id/pay`（模擬付款端點）**保留**，供整合測試（Vitest）繼續使用，不對外暴露於 UI
+- 本地端開發因使用非標準 port，ReturnURL 無法被綠界伺服器呼叫；付款確認主要依賴 QueryTradeInfo 主動查詢
+
+---
+
 ## [1.0.0] - 2026-04-18
 
 ### 新增
