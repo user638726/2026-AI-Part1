@@ -1,0 +1,14 @@
+<div class="flex flex-col items-center justify-center py-24">
+  <div class="w-10 h-10 border-4 border-rose-primary border-t-transparent rounded-full animate-spin mb-6"></div>
+  <p class="text-text-secondary text-sm">正在跳轉至綠界付款頁面，請稍候...</p>
+
+  <form id="ecpay-form" action="<%= paymentUrl %>" method="POST" style="display:none;">
+    <% Object.entries(paymentParams).forEach(function([key, value]) { %>
+      <input type="hidden" name="<%= key %>" value="<%= value %>">
+    <% }); %>
+  </form>
+</div>
+
+<script>
+  document.getElementById('ecpay-form').submit();
+</script>
